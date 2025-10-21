@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="utf-8" />
+  <title>خريطة المزرعة — عرض وتعديل KML</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+  <style>
+    body { margin:0; font-family: Arial, sans-serif; direction: rtl; }
+    #topbar { padding:10px; background:#f7f7f7; border-bottom:1px solid #ddd; display:flex; gap:10px; align-items:center; }
+    #map { height: calc(100vh - 58px); }
+    .btn { padding:6px 10px; background:#2E86AB; color:white; border:none; cursor:pointer; border-radius:4px; }
+    .btn.gray { background:#6c757d; }
+    input[type=file] { display:inline-block; }
+    #status { margin-left:12px;color:#333 }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <div>
+      <label for="fileInput">تحميل ملف KML (اختياري):</label>
+      <input id="fileInput" type="file" accept=".kml"/>
+    </div>
+    <button id="downloadGeojson" class="btn gray">تنزيل GeoJSON</button>
+    <button id="saveServer" class="btn">حفظ تلقائي (إذا مفعّل)</button>
+    <button id="zoomAll" class="btn">تكبير لعرض الكل</button>
+    <div id="status">جارٍ التحميل...</div>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  <script src="https://unpkg.com/togeojson@0.16.0/dist/togeojson.js"></script>
+
+  <script>
+    const status = document.getElementById('status');
+
+    const map = L.map('map').setView([30.74, 30.14], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 22, attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    const drawnItems = new L.FeatureGroup().addTo(map);
+
+    const drawControl = new L.Control.Draw({
+      edit: { featureGroup: drawnItems },
+      draw: {
+        polygon: true,
+        rectangle: true,
+        polyline: false,
+        circle: false,
+        marker: false,
+        circlemarker: false
+      }
+    });
+    map.addControl(drawControl);
+
+    map.on(L.Draw.Event.CREATED, function (e) {
+      drawnItems.addLayer(e.layer);
+    });
+
+    function bindFeaturePopup(layer, properties) {
+      let html = '';
+      if (properties && Object.keys(properties).length) {
+        html += '<div>';
+        for (const k in properties) {
+          html += `<b>${k}:</b> ${properties[k]}<br/>`;
+        }
+        html += '</div>';
+      } else {
+        html = '<div>لا توجد خصائص</div>';
+      }
+      layer.bindPopup(html);
+    }
+
+    function addGeoJSONToMap(geojson) {
+      drawnItems.clearLayers();
+      L.geoJSON(geojson, {
+        style: function(feature) { return { color: '#2E86AB', weight: 2, fillOpacity: 0.35 }; },
+        onEachFeature: function(feature, layer) {
+          bindFeaturePopup(layer, feature.properties || {});
+          drawnItems.addLayer(layer);
+        }
+      }).addTo(map);
+      if (drawnItems.getLayers().length) {
+        map.fitBounds(drawnItems.getBounds(), { padding:[20,20] });
+      }
+      status.textContent = 'تم العرض — يمكنك التعديل ثم الحفظ أو التنزيل';
+    }
+
+    // حمل KML تلقائياً إذا الملف موجود في نفس المسار (123.kml)
+    fetch('123.kml').then(r => {
+      if (!r.ok) throw new Error('لا يوجد ملف KML افتراضي');
+      return r.text();
+    }).then(text => {
+      const parser = new DOMParser();
+      const kmlDoc = parser.parseFromString(text, 'text/xml');
+      const geojson = toGeoJSON.kml(kmlDoc);
+      addGeoJSONToMap(geojson);
+    }).catch(err => {
+      status.textContent = 'لم يتم العثور على ملف KML افتراضي. يمكنك تحميله يدوياً.';
+      console.log(err);
+    });
+
+    // تحميل KML من الملف المحلي للمستخدم
+    document.getElementById('fileInput').addEventListener('change', function(evt) {
+      const file = evt.target.files[0];
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith('.kml')) {
+        alert('يرجى اختيار ملف بلاحقة .kml');
+        return;
+      }
+      status.textContent = 'جارٍ قراءة الملف...';
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const parser = new DOMParser();
+          const kmlDoc = parser.parseFromString(e.target.result, 'text/xml');
+          const geojson = toGeoJSON.kml(kmlDoc);
+          addGeoJSONToMap(geojson);
+        } catch (err) {
+          console.error(err);
+          alert('حدث خطأ أثناء تحويل الملف. تأكد من صحة ملف KML.');
+          status.textContent = 'خطأ في قراءة الملف';
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // تنزيل GeoJSON
+    document.getElementById('downloadGeojson').addEventListener('click', function() {
+      const allGeojson = drawnItems.toGeoJSON();
+      const str = JSON.stringify(allGeojson, null, 2);
+      const blob = new Blob([str], {type: "application/json;charset=utf-8"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'plots.geojson';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    document.getElementById('zoomAll').addEventListener('click', function(){
+      if (drawnItems.getLayers().length) {
+        map.fitBounds(drawnItems.getBounds(), { padding:[20,20] });
+      } else {
+        alert('لا توجد طبقات للعرض.');
+      }
+    });
+
+    // حفظ تلقائي عبر Netlify Function (أو أي عنوان وظيفة لديك)
+    document.getElementById('saveServer').addEventListener('click', async function(){
+      // نجهز GeoJSON
+      const geo = drawnItems.toGeoJSON();
+      if (!geo.features || !geo.features.length) {
+        alert('لا توجد طبعات لحفظها.');
+        return;
+      }
+
+      // هنا نتبع استراتيجية آمنة: نطلب من الأدمن إدخال "سر الأدمن" المخزن في إعدادات Netlify (ADMIN_SECRET)
+      const adminSecret = prompt('ادخل سر الأدمن (ADMIN_SECRET) لتأكيد الحفظ التلقائي (سيُطلب منك مرة لكل حفظ):');
+      if (!adminSecret) return;
+
+      // استدعاء الدالة (تأكد من نشرها على Netlify أو استبدال المسار بالمسار الفعلي)
+      try {
+        status.textContent = 'جارٍ إرسال البيانات للحفظ...';
+        const res = await fetch('/.netlify/functions/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            admin_secret: adminSecret,
+            commit_message: 'تحديث قطع المزرعة (حفظ من الواجهة)',
+            path: 'data/plots.geojson',
+            content: geo
+          })
+        });
+        const j = await res.json();
+        if (res.ok) {
+          alert('تم الحفظ بنجاح: ' + (j.message || 'تم'));
+          status.textContent = 'تم الحفظ على الخادم';
+        } else {
+          alert('خطأ في الحفظ: ' + (j.error || JSON.stringify(j)));
+          status.textContent = 'خطأ في الحفظ';
+        }
+      } catch (err) {
+        console.error(err);
+        alert('حدث خطأ أثناء الاتصال بالخادم. تأكد من إعداد Netlify Function.');
+        status.textContent = 'خطأ في الاتصال';
+      }
+    });
+
+  </script>
+</body>
+</html>
