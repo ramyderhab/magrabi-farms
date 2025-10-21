@@ -241,5 +241,41 @@
     });
 
   </script>
+  // --- إضافة زر تفاعلي لإدراج علامة المزرعة ---
+const placeMarkerBtn = L.control({ position: 'topleft' });
+placeMarkerBtn.onAdd = function(map) {
+  const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+  div.style.background = '#2E86AB';
+  div.style.color = 'white';
+  div.style.padding = '6px';
+  div.style.cursor = 'pointer';
+  div.title = 'أضف علامة المزرعة';
+  div.innerHTML = 'أضف علامة';
+  L.DomEvent.on(div, 'click', function(e) {
+    L.DomEvent.stopPropagation(e);
+    const name = prompt('اكتب اسم المزرعة:', 'مزرعتي');
+    if (!name) return;
+    alert('الآن اضغط على المكان في الخريطة لوضع العلامة.');
+    map.once('click', function(ev) {
+      addFarmMarker(ev.latlng.lat, ev.latlng.lng, name);
+    });
+  });
+  return div;
+};
+placeMarkerBtn.addTo(map);
+
+// دالة إضافة العلامة وحفظها في drawnItems
+function addFarmMarker(lat, lng, name) {
+  const marker = L.marker([lat, lng], { riseOnHover: true });
+  marker.feature = {
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [lng, lat] },
+    properties: { name: name }
+  };
+  marker.bindPopup(`<b>${name}</b>`);
+  drawnItems.addLayer(marker);
+  marker.openPopup();
+  map.setView([lat, lng], 16);
+}
 </body>
 </html>
