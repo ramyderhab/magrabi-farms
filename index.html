@@ -42,7 +42,10 @@
     }).addTo(map);
 
     const drawnItems = new L.FeatureGroup().addTo(map);
-    // --- إضافة زر تفاعلي لإدراج علامة المزرعة ---
+  // تحسين طريقة وضع العلامة: استخدام علم (waitingForMarker)
+let waitingForMarker = false;
+
+// أنشئ الزر كما كان
 const placeMarkerBtn = L.control({ position: 'topleft' });
 placeMarkerBtn.onAdd = function(map) {
   const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
@@ -54,33 +57,27 @@ placeMarkerBtn.onAdd = function(map) {
   div.innerHTML = 'أضف علامة';
   L.DomEvent.on(div, 'click', function(e) {
     L.DomEvent.stopPropagation(e);
+    // بدل prompt دائماً يمكنك استخدام prompt كما تريد
     const name = prompt('اكتب اسم المزرعة:', 'مزرعتي');
     if (!name) return;
-    alert('الآن اضغط على المكان في الخريطة لوضع العلامة.');
-    map.once('click', function(ev) {
-      addFarmMarker(ev.latlng.lat, ev.latlng.lng, name);
-    });
+    // فعل العلم وغيّر شكل المؤشر ليعرف المستخدم أنه الآن يضع علامة
+    waitingForMarker = name; // نخزن الاسم في العلم بدل boolean لسهولة الاستخدام
+    map.getContainer().style.cursor = 'crosshair';
+    status.textContent = 'اضغط على الخريطة لوضع العلامة: ' + name;
   });
   return div;
 };
 placeMarkerBtn.addTo(map);
 
-// دالة إضافة العلامة وحفظها في drawnItems
-function addFarmMarker(lat, lng, name) {
-  const marker = L.marker([lat, lng], { riseOnHover: true });
-  marker.feature = {
-    type: 'Feature',
-    geometry: { type: 'Point', coordinates: [lng, lat] },
-    properties: { name: name }
-  };
-  marker.bindPopup(`<b>${name}</b>`);
-  // إذا لم يُعرف drawnItems، ننشئه ونضيفه للخريطة (تحسبًا)
-  if (typeof drawnItems === 'undefined') {
-    window.drawnItems = new L.FeatureGroup().addTo(map);
-  }
-  drawnItems.addLayer(marker);
-  marker.openPopup();
-  map.setView([lat, lng], 16);
+// معالج نقر الخريطة العام — سيضيف العلامة فقط إن كان waitingForMarker مفعل
+map.on('click', function(ev) {
+  if (!waitingForMarker) return;
+  const name = waitingForMarker;
+  waitingForMarker = false;
+  map.getContainer().style.cursor = ''; // استرجاع المؤشر الطبيعي
+  addFarmMarker(ev.latlng.lat, ev.latlng.lng, name);
+  status.textContent = 'تم إضافة العلامة: ' + name;
+});
 }
 
     const drawControl = new L.Control.Draw({
