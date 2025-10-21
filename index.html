@@ -2,7 +2,7 @@
 <html lang="ar">
 <head>
   <meta charset="utf-8" />
-  <title>خريطة المزرعة — عرض وتعديل KML</title>
+  <title>خريطة المزرعة — عرض وتعديل KML/GeoJSON</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
@@ -19,8 +19,8 @@
 <body>
   <div id="topbar">
     <div>
-      <label for="fileInput">تحميل ملف KML (اختياري):</label>
-      <input id="fileInput" type="file" accept=".kml"/>
+      <label for="fileInput">تحميل ملف KML/GeoJSON (اختياري):</label>
+      <input id="fileInput" type="file" accept=".kml,.geojson,.json"/>
     </div>
     <button id="downloadGeojson" class="btn gray">تنزيل GeoJSON</button>
     <button id="saveServer" class="btn">حفظ تلقائي (إذا مفعّل)</button>
@@ -75,54 +75,103 @@
       layer.bindPopup(html);
     }
 
+    // Helper: create Leaflet icon from feature.properties.icon (data: or url)
+    function createIconFromProps(props) {
+      if (!props) return null;
+      const iconUrl = props.icon || props['icon-url'] || props.image;
+      if (!iconUrl) return null;
+      // determine size from icon-scale (fallback 32)
+      const scale = parseFloat(props['icon-scale'] || props['icon-scale'] === 0 ? props['icon-scale'] : (props['icon-scale'] || 1));
+      const baseSize = 32;
+      const size = Math.max(12, Math.round(baseSize * (scale || 1)));
+      return L.icon({
+        iconUrl: iconUrl,
+        iconSize: [size, size],
+        iconAnchor: [Math.round(size/2), size],
+        popupAnchor: [0, -size/2]
+      });
+    }
+
     function addGeoJSONToMap(geojson) {
       drawnItems.clearLayers();
       L.geoJSON(geojson, {
-        style: function(feature) { return { color: '#2E86AB', weight: 2, fillOpacity: 0.35 }; },
+        // style for Polygons/Lines using properties if present
+        style: function(feature) {
+          const p = feature.properties || {};
+          return {
+            color: p.stroke || p['stroke'] || '#2E86AB',
+            weight: p['stroke-width'] || p['stroke_width'] || p['strokeWidth'] || 2,
+            opacity: (p['stroke-opacity'] !== undefined) ? p['stroke-opacity'] : (p['stroke_opacity'] !== undefined ? p['stroke_opacity'] : 1),
+            fillColor: p.fill || p['fill'] || '#ffffff',
+            fillOpacity: (p['fill-opacity'] !== undefined) ? p['fill-opacity'] : (p['fill_opacity'] !== undefined ? p['fill_opacity'] : 0.35)
+          };
+        },
+        pointToLayer: function(feature, latlng) {
+          // If icon property exists, use it; otherwise circleMarker
+          const p = feature.properties || {};
+          const icon = createIconFromProps(p);
+          if (icon) {
+            return L.marker(latlng, { icon: icon });
+          } else {
+            // allow customization of point radius by property
+            const r = p['marker-radius'] || p['radius'] || 6;
+            return L.circleMarker(latlng, { radius: r, color: p.stroke || '#2E86AB', fillColor: p.fill || '#2E86AB', fillOpacity: 0.9 });
+          }
+        },
         onEachFeature: function(feature, layer) {
           bindFeaturePopup(layer, feature.properties || {});
           drawnItems.addLayer(layer);
         }
       }).addTo(map);
+
       if (drawnItems.getLayers().length) {
-        map.fitBounds(drawnItems.getBounds(), { padding:[20,20] });
+        try {
+          map.fitBounds(drawnItems.getBounds(), { padding:[20,20] });
+        } catch(e) {
+          console.warn('fitBounds failed:', e);
+        }
       }
       status.textContent = 'تم العرض — يمكنك التعديل ثم الحفظ أو التنزيل';
     }
 
-    // حمل KML تلقائياً إذا الملف موجود في نفس المسار (123.kml)
-    fetch('123.kml').then(r => {
-      if (!r.ok) throw new Error('لا يوجد ملف KML افتراضي');
-      return r.text();
-    }).then(text => {
-      const parser = new DOMParser();
-      const kmlDoc = parser.parseFromString(text, 'text/xml');
-      const geojson = toGeoJSON.kml(kmlDoc);
-      addGeoJSONToMap(geojson);
-    }).catch(err => {
-      status.textContent = 'لم يتم العثور على ملف KML افتراضي. يمكنك تحميله يدوياً.';
-      console.log(err);
-    });
+    // --- تحميل افتراضي الآن من ملف GeoJSON (map-3.geojson) إذا موجود ---
+    fetch('map-3.geojson')
+      .then(r => {
+        if (!r.ok) throw new Error('لا يوجد ملف GeoJSON افتراضي');
+        return r.json();
+      })
+      .then(geo => {
+        addGeoJSONToMap(geo);
+      })
+      .catch(err => {
+        // إن لم نجد GeoJSON سنبقي رسالة للمستخدم ونبقي خيار رفع KML/GeoJSON يدوياً
+        status.textContent = 'لم يتم العثور على ملف افتراضي (map-3.geojson). يمكنك تحميل KML أو GeoJSON يدوياً.';
+        console.log(err);
+      });
 
-    // تحميل KML من الملف المحلي للمستخدم
+    // تحميل KML أو GeoJSON من الملف المحلي للمستخدم
     document.getElementById('fileInput').addEventListener('change', function(evt) {
       const file = evt.target.files[0];
       if (!file) return;
-      if (!file.name.toLowerCase().endsWith('.kml')) {
-        alert('يرجى اختيار ملف بلاحقة .kml');
-        return;
-      }
       status.textContent = 'جارٍ قراءة الملف...';
       const reader = new FileReader();
       reader.onload = function(e) {
         try {
-          const parser = new DOMParser();
-          const kmlDoc = parser.parseFromString(e.target.result, 'text/xml');
-          const geojson = toGeoJSON.kml(kmlDoc);
-          addGeoJSONToMap(geojson);
+          const text = e.target.result;
+          if (file.name.toLowerCase().endsWith('.kml')) {
+            const parser = new DOMParser();
+            const kmlDoc = parser.parseFromString(text, 'text/xml');
+            const geojson = toGeoJSON.kml(kmlDoc);
+            addGeoJSONToMap(geojson);
+          } else {
+            // نفترض GeoJSON/JSON
+            const geo = JSON.parse(text);
+            addGeoJSONToMap(geo);
+          }
+          status.textContent = 'تم تحميل الملف وعرضه.';
         } catch (err) {
           console.error(err);
-          alert('حدث خطأ أثناء تحويل الملف. تأكد من صحة ملف KML.');
+          alert('حدث خطأ أثناء تحويل/قراءة الملف. تأكد من صحة الملف.');
           status.textContent = 'خطأ في قراءة الملف';
         }
       };
@@ -161,11 +210,9 @@
         return;
       }
 
-      // هنا نتبع استراتيجية آمنة: نطلب من الأدمن إدخال "سر الأدمن" المخزن في إعدادات Netlify (ADMIN_SECRET)
       const adminSecret = prompt('ادخل سر الأدمن (ADMIN_SECRET) لتأكيد الحفظ التلقائي (سيُطلب منك مرة لكل حفظ):');
       if (!adminSecret) return;
 
-      // استدعاء الدالة (تأكد من نشرها على Netlify أو استبدال المسار بالمسار الفعلي)
       try {
         status.textContent = 'جارٍ إرسال البيانات للحفظ...';
         const res = await fetch('/.netlify/functions/save', {
